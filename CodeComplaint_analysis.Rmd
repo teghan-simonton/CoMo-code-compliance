@@ -1,0 +1,777 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(ExcelFunctionsR)
+library(lubridate)
+library(tidygeocoder)
+library(leaflet)
+library(tidycensus)
+library(sf)
+```
+
+```{r}
+#Import master file
+codevio_master <- read_csv("~/Documents/como_neighborhoods/data/como_code_violations.csv")
+```
+
+```{r}
+#Integrity Checks
+codevio_master %>% count(code_case_number) %>% arrange(desc(n))#some case numbers repeat up to 3 times
+codevio_master %>% filter(code_case_number == 19090) #appears to be a duplicate except cename. Why would there be different names in the same code complaint?
+
+codevio_master %>% count(address) %>% arrange(desc(n)) #Not surprising that addresses repeat. About 1900 records with no address
+codevio_master %>% filter(address == 0)#Graffiti, unlicensed vehicles, other things not tied to a place. Some of the cename fields could probably be changed to addresses, but it could take a long time
+codevio_master %>% filter(is.na(address))#Similar to above
+
+codevio_master %>% count(code_case_opened_date) %>% arrange(desc(n))#No NAs
+
+codevio_master %>% count(code_case_type) %>% arrange(desc(n)) #51 case types here, many can be combined. Take to OpenRefine?
+
+codevio_master %>% count(code_case_closed_date) %>% arrange(desc(n))
+
+codevio_master %>% count(code_case_district) %>% arrange(desc(n))#One of the datasets doesn't have this field, should figure out what it is but will probably ignore
+
+codevio_master %>% count(code_case_status) %>% arrange(desc(n))#13 options. Maybe consolidate.
+
+codevio_master %>% count(code_case_description) %>% arrange(desc(n))
+codevio_master %>% filter(is.na(code_case_description))#Unclear why there are so many NAs
+
+codevio_master %>% count(case_year) %>% arrange(desc(n)) #Two likely typos
+codevio_master %>% filter(case_year == 2047) #Can't tell what it's supposed to be, though
+codevio_master %>% filter(case_year == 1991)
+
+codevio_master %>% count(clean_address) %>% arrange(desc(n))#Again, about 1900 unusable addresses
+codevio_master %>% filter(is.na(latitude)) %>% count(clean_address) %>% arrange(desc(n))
+
+codevio_master %>% count(case_loc_id) %>% arrange(desc(n))#No idea what this is, one of the datasets doesn't have it
+
+codevio_master %>% count(case_default_inspector) %>% arrange(desc(n))#Same as above
+
+codevio_master %>% count(case_tenant_name) %>% arrange(desc(n))#Most of the records in the both datasets do not have this field
+
+codevio_master %>% count(case_tenant_number) %>% arrange(desc(n))#All NAs
+
+codevio_master %>% count(origination_code) %>% arrange(desc(n))#Where complaint came from. One dataset does not have this
+
+codevio_master %>% count(cenmtp) %>% arrange(desc(n))#No idea what this is
+codevio_master %>% filter(is.na(cenmtp))
+
+codevio_master %>% count(cename) %>% arrange(desc(n))#One of the datasets does not have this, but it seems to be the name of tenat. Some might help ID missing addresses
+
+codevio_master %>% count(zip_code) %>% arrange(desc(n))
+codevio_master %>% filter(is.na(zip_code)) #It doesn't seem to matter that these zips are missing, because they are still in the address field
+
+codevio_master %>% count(city) %>% arrange(desc(n))#Same as above + one dataset didn't specify
+
+codevio_master %>% count(latitude) %>% arrange(desc(n)) #9978 NAs, 1791 incorrect (I believe these are th addresses marked "0")
+codevio_master %>% filter(grepl(-34.61702, latitude))#Yes
+codevio_master %>% filter(is.na(latitude)) #Why didn't these addresses geocode correctly?
+
+codevio_master %>% count(longitude) %>% arrange(desc(n))#Same as above
+
+```
+
+```{r}
+codevio_master %>% filter(is.na(latitude)) %>% count(clean_address) %>% arrange(desc(n))
+
+test <- codevio_master %>% filter(is.na(latitude)) %>% select(-latitude, -longitude) 
+
+test$clean_address <- gsub("NINTH", "9TH", test$clean_address)
+test$clean_address <- gsub("FOURTH", "4TH", test$clean_address)
+test$clean_address <- gsub("SEVENTH", "7TH", test$clean_address)
+test$clean_address <- gsub("N HWY 763", "MO 763", test$clean_address)
+test$clean_address <- gsub("THIRD", "3RD", test$clean_address)
+test$clean_address <- gsub("S WEST BLVD", "WEST BLVD S", test$clean_address)
+test$clean_address <- gsub("Unit.*\\,", "", test$clean_address)
+test$clean_address <- gsub("APT.*\\,", "", test$clean_address)
+test$clean_address <- gsub("BLDG.*\\,", "", test$clean_address)
+test$clean_address <- gsub("TEMP", "", test$clean_address)
+test$clean_address <- gsub("EIGHTH", "8TH", test$clean_address)
+test$clean_address <- gsub("SIXTH", "6TH", test$clean_address)
+test$clean_address <- gsub("N OLD 63", "OLD 63 N", test$clean_address)
+test$clean_address <- gsub("S OLD 63", "OLD 63 S", test$clean_address)
+test$clean_address <- gsub("RANGE LINE", "RANGELINE", test$clean_address)
+test$clean_address <- gsub("WHITE GATE", "WHITEGATE", test$clean_address)
+test$clean_address <- gsub("DEMO", "", test$clean_address)
+test$clean_address <- gsub("DUP", "", test$clean_address)
+test$clean_address <- gsub("FIFTH", "5TH", test$clean_address)
+test$clean_address <- gsub("EAST BRIDGEWOOD", "BRIDGEWOOD", test$clean_address)
+test$clean_address <- gsub(" SIGN", "", test$clean_address)
+test$clean_address <- gsub("JACOBPL", "JACOBS PL", test$clean_address)
+test$clean_address <- gsub("NEWTODR", "NEWTON DR", test$clean_address)
+test$clean_address <- gsub("HINKSOCREEK", "HINKSON CREEK", test$clean_address)
+test$clean_address <- gsub("HINKSOAVE", "HINKSON AVE", test$clean_address)
+test$clean_address <- gsub("JAMESDALE", "JAMES DALE", test$clean_address)
+test$clean_address <- gsub("BLUFF DALE", "BLUFFDALE", test$clean_address)
+test$clean_address <- gsub("ROLLINRD", "ROLLIN RD", test$clean_address)
+test$clean_address <- gsub("TYPHOODR", "TYPHOON DR", test$clean_address)
+test$clean_address <- gsub("L ", "LN", test$clean_address)
+test$clean_address <- gsub(" L,", "LN,", test$clean_address)
+test$clean_address <- gsub("TEXAAVE", "TEXAS AVE", test$clean_address)
+test$clean_address <- gsub("BULLNRUDR", "BULLNER DR", test$clean_address)
+test$clean_address <- gsub("SEXTORD", "SEXTON RD", test$clean_address)
+test$clean_address <- gsub("ST SHOP", "ST", test$clean_address)
+test$clean_address <- gsub("710 COLLEGE AVE", "710 S COLLEGE AVE", test$clean_address)
+test$clean_address <- gsub("PARIRD", "PARIS RD", test$clean_address)
+test$clean_address <- gsub("HICKMAAVE", "HICKMAN AVE", test$clean_address)
+test$clean_address <- gsub("BROWSTATIORD", "BROWN STATION RD", test$clean_address)
+test$clean_address <- gsub("DORIDR", "DORIS DR", test$clean_address)
+test$clean_address <- gsub("3 GRACE LN", "3 N GRACE LN", test$clean_address)
+test$clean_address <- gsub("2614 ROCK QUARRY", "2614 S ROCK QUARRY", test$clean_address)
+test$clean_address <- gsub("VARDEDR", "VARDEN DR", test$clean_address)
+test$clean_address <- gsub("TRLR.*\\,", "", test$clean_address)
+test$clean_address <- gsub("2400 BALLENGER LN", "2400 N BALLENGER LN", test$clean_address)
+test$clean_address <- gsub("1003 COLLEGE AVE", "1003 N COLLEGE AVE", test$clean_address)
+test$clean_address <- gsub("RUDR", "RUN DR", test$clean_address)
+test$clean_address <- gsub("2801 ROCK QUARRY RD", "2801 S ROCK QUARRY RD", test$clean_address)
+test$clean_address <- gsub("FAIR HAVEDR", "FAIR HAVEN DR", test$clean_address)
+test$clean_address <- gsub("3112 ROCK QUARRY", "3112 S ROCK QUARRY", test$clean_address)
+test$clean_address <- gsub("HILLNDR", "HILL DR", test$clean_address)
+test$clean_address <- gsub("1005 COLLEGE AVE", "1005 S COLLEGE AVE", test$clean_address)
+test$clean_address <- gsub("MADISOST", "MADISON ST", test$clean_address)
+test$clean_address <- gsub("EAST WILLOWBROOK RD", "E WILLOWBROOK", test$clean_address)
+test$clean_address <- gsub("4200 ROCK QUARRY", "4200 S ROCK QUARRY", test$clean_address)
+test$clean_address <- gsub("ROGERST", "ROGER ST", test$clean_address)
+test$clean_address <- gsub("CLINKSCALERD", "CLINKSCALES RD", test$clean_address)
+test$clean_address <- gsub("COTTOWOOD", "COTTONWOOD", test$clean_address)
+test$clean_address <- gsub("CARPATHIADR", "CARPATHIAN DR", test$clean_address)
+test$clean_address <- gsub("BLVD CELL", "BLVD", test$clean_address)
+test$clean_address <- gsub("CHARLERD", "CHARLES RD", test$clean_address)
+test$clean_address <- gsub("CANAVERALNDR", "CANAVERAL DR", test$clean_address)
+test$clean_address <- gsub("BULLNRUN", "BULL RUN", test$clean_address)
+test$clean_address <- gsub("N WEST BLVD", "WEST BLVD N", test$clean_address)
+test$clean_address <- gsub("PLN", "PL", test$clean_address)
+test$clean_address <- gsub("GRAVELNRD", "GRAVEL RD", test$clean_address)
+test$clean_address <- gsub("WHITE TIGER ST", "WHITE TIGER LN", test$clean_address)
+test$clean_address <- gsub("4801 HINKSON CREEK", "4801 N HINKSON CREEK", test$clean_address)
+test$clean_address <- gsub("MNR", "MANOR", test$clean_address)
+test$clean_address <- gsub("TRAILNRIDGE", "TRAIL RIDGE", test$clean_address)
+test$clean_address <- gsub("WOODRAILNON", "WOODRAIL ON", test$clean_address)
+test$clean_address <- gsub("COTTON WOOD", "COTTONWOOD", test$clean_address)
+test$clean_address <- gsub("CLUB DRIVE SOUTH", "CLUB DR", test$clean_address)
+test$clean_address <- gsub("COUNTRY SIDE LN", "COUNTRYSIDE LN", test$clean_address)
+test$clean_address <- gsub("SOUTH BRIDGEWOOD", "S BRIDGEWOOD", test$clean_address)
+test$clean_address <- gsub("BENTHALLNBLVD", "BENTHALL BLVD", test$clean_address)
+test$clean_address <- gsub("3500 CREASY SPRINGS", "3500 N CREASY SPRINGS", test$clean_address)
+test$clean_address <- gsub("SOUTHAMPTON DR MO", "SOUTHAMPTON DR, COLUMBIA, MO", test$clean_address)
+test$clean_address <- gsub("QUAILNDR MO", "QUAIL DR, COLUMBIA MO", test$clean_address)
+
+
+
+address_cleaning <- test %>% 
+  tidygeocoder::geocode(clean_address, method = 'osm', lat = latitude, lon = longitude, progress = TRUE)
+
+address_cleaning <- read_csv("~/Documents/address_cleaning.csv")
+
+address_cleaning %>% filter(is.na(latitude))
+
+codevio_master <- bind_rows(codevio_master, address_cleaning) 
+
+```
+
+```{r}
+#Combine some code statuses to make mapping simpler
+codevio_master %>% 
+  count(code_case_status)#Ask CoMo what all of these mean. What is the difference between resolved and in compliance? Closed?
+
+codevio_master <- codevio_master %>% 
+  mutate(clean_status = code_case_status) %>% 
+  mutate(clean_status = replace(clean_status, clean_status == "Awaiting Prosecution", "Referred/Awaiting Prosecution"),
+         clean_status = replace(clean_status, clean_status == "Referred to Prosecutor", "Referred/Awaiting Prosecution"),
+         clean_status = replace(clean_status, clean_status == "Voided", "Void"),
+         clean_status = replace(clean_status, grepl("Resolved", clean_status), "Resolved"),
+         clean_status = replace(clean_status, grepl("Compliance", clean_status), "Resolved"),
+         clean_status = replace(clean_status, clean_status == "Closed", "Resolved"))
+
+codevio_master %>% count(clean_status)
+```
+
+```{r}
+codevio_master %>% 
+  count(code_case_type) %>% 
+  arrange(desc(n))
+
+codevio_master <- codevio_master %>% 
+  mutate(clean_case_type = code_case_type)
+
+#Write CSV and take to OpenRefine
+read_csv(codevio_master, "data/como_code_violations.csv")
+
+#In OpenRefine: Cluster and edit clean_case_type column. I got it down to 24 categories (from 54) but there is still more cleaning to do in R.
+
+```
+#START HERE
+
+```{r}
+#Import new version of CSV:
+codevio_master <- read_csv("~/Documents/como_neighborhoods/data/como-code-violations-orupdated.csv")
+
+codevio_master %>% 
+  count(clean_case_type)
+
+#Change nuisance complaints that should be landscaping complaints
+codevio_master <- codevio_master %>% 
+  mutate(clean_case_type = replace(clean_case_type, clean_case_type == "Nuisance" & grepl("tree", code_case_description, ignore.case = T) & !grepl("sidewalk", code_case_description, ignore.case = T), "Landscape Management")) 
+
+codevio_master <- codevio_master %>% 
+  mutate(clean_case_type = replace(clean_case_type, clean_case_type == "Nuisance" & grepl("limbs", code_case_description, ignore.case = T) & !grepl("sidewalk", code_case_description, ignore.case = T), "Landscape Management")) 
+
+#Change nuisance complaints that should be trash complaints
+codevio_master <- codevio_master %>% 
+  mutate(clean_case_type = replace(clean_case_type, clean_case_type == "Nuisance" & !grepl("tree", code_case_description, ignore.case = T) & grepl("trash", code_case_description, ignore.case = T) & !grepl("sidewalk", code_case_description, ignore.case = T), "Trash/Waste"))
+
+codevio_master <- codevio_master %>% 
+  mutate(clean_case_type = replace(clean_case_type, clean_case_type == "Nuisance" & !grepl("tree", code_case_description, ignore.case = T) & grepl("garbage", code_case_description, ignore.case = T) & !grepl("sidewalk", code_case_description, ignore.case = T), "Trash/Waste"))
+
+codevio_master <- codevio_master %>% 
+  mutate(clean_case_type = replace(clean_case_type, clean_case_type == "Nuisance" & !grepl("tree", code_case_description, ignore.case = T) & grepl("tire", code_case_description, ignore.case = T) & !grepl("sidewalk", code_case_description, ignore.case = T), "Trash/Waste"))
+
+#Make any mention of sidewalk blockages into a sidewalk complaint
+codevio_master <- codevio_master %>% 
+  mutate(clean_case_type = replace(clean_case_type, clean_case_type == "Nuisance" & grepl("sidewalk", code_case_description, ignore.case = T), "Streets and Sidewalks Violation"))
+
+codevio_master %>% filter(grepl("nuisance", clean_case_type, ignore.case = T))
+
+codevio_master %>% filter(grepl("trash", code_case_description, ignore.case = T))
+
+codevio_master %>% filter(clean_case_type == "Nuisance")
+
+
+codevio_master %>% 
+  count(clean_case_type) %>% 
+  arrange(desc(n))
+```
+
+
+#Resolution Analysis
+
+```{r}
+codevio_master <- codevio_master %>% 
+  mutate(resolution_time = code_case_closed_date-code_case_opened_date) %>% 
+  mutate(resolution_days = as.numeric(str_extract(resolution_time,"(\\w+)")))
+
+codevio_master <- codevio_master %>% 
+  mutate(resolution_range = as.character(resolution_days),
+         resolution_range = if_else(resolution_days <= 7, "Less than a week", resolution_range),
+         resolution_range = if_else(resolution_days > 7 & resolution_days <= 14, "1-2 weeks", resolution_range),
+         resolution_range = if_else(resolution_days > 14 & resolution_days <= 30, "A month or less", resolution_range),
+         resolution_range = if_else(resolution_days > 30 & resolution_days <= 90, "1-3 months", resolution_range),
+         resolution_range = if_else(resolution_days > 90 & resolution_days <= 270, "3-6 months", resolution_range),
+         resolution_range = if_else(resolution_days > 270 & resolution_days <= 365, "6 months - 1 year", resolution_range),
+         resolution_range = if_else(resolution_days > 365, "Over a year", resolution_range))
+
+codevio_master %>% 
+  count(resolution_range) %>% 
+  arrange(desc(n))
+#Most complaints were resolved in less than a week
+```
+
+#Mapping
+
+```{r}
+#Create color palette
+resolution_pal <- colorFactor(
+  palette = c("#2A81CB","#CAC428", "#CB2B3E", "#2AAD27", "#7B7B7B", "#CB8427", "#9C2BCB"),
+  domain = codevio_master$resolution_range)
+
+#Map resolved complaints, color-code by resolution time
+codevio_master %>% 
+  filter(clean_status == "Resolved") %>% 
+  leaflet() %>%  
+  addTiles %>% 
+  setView(-92.328636, 38.951561, zoom = 12) %>% 
+addCircleMarkers(col = ~resolution_pal(resolution_range), weight = 1, radius = 2, stroke = F, fillOpacity = 0.5, popup = codevio_master$clean_address) %>%
+  addLegend("bottomright", colors = c("#2A81CB","#CAC428", "#2AAD27", "#CB2B3E", "#7B7B7B", "#CB8427", "#9C2BCB"), labels = c("Less than a week", "1-2 weeks", "A month or less", "1-3 months", "3-6 months", "6 months - 1 year", "Over a year"), 
+            title="Resolution time")
+
+```
+
+
+```{r}
+#Look only at Rental violations - they clearly take longer to resolve than complaints as a whole
+codevio_master %>% 
+  filter(clean_status == "Resolved") %>% 
+  filter(clean_case_type == "Illegal Rental" | clean_case_type == "Rental Violation") %>% 
+  count(resolution_range) %>% 
+  arrange(desc(n))
+
+codevio_master %>% 
+  filter(clean_status == "Resolved") %>% 
+  filter(clean_case_type == "Illegal Rental" | clean_case_type == "Rental Violation") %>% 
+  leaflet()%>% 
+  addTiles %>% 
+  setView(-92.328636, 38.951561, zoom = 12) %>% 
+  addCircleMarkers(col = ~resolution_pal(resolution_range), weight = 1, radius = 2, stroke = F, fillOpacity = 0.5, popup = codevio_master$clean_address) %>%
+  addLegend("bottomright", colors = c("#2A81CB","#CAC428", "#2AAD27", "#CB2B3E", "#7B7B7B", "#CB8427", "#9C2BCB"), labels = c("Less than a week", "1-2 weeks", "A month or less", "1-3 months", "3-6 months", "6 months - 1 year", "Over a year"), 
+            title="Resolution time")
+
+```
+
+```{r}
+#Look only at property maintenance issues - these also appear to take longer to resolve
+codevio_master %>% 
+  filter(clean_status == "Resolved") %>% 
+  filter(clean_case_type == "Property Maintenance") %>%  
+  count(resolution_range) %>% 
+  arrange(desc(n))
+
+codevio_master %>% 
+  filter(clean_status == "Resolved") %>% 
+  filter(clean_case_type == "Property Maintenance") %>% 
+  leaflet()%>% 
+  addTiles %>% 
+  setView(-92.328636, 38.951561, zoom = 12) %>% 
+  addCircleMarkers(col = ~resolution_pal(resolution_range), weight = 1, radius = 2, stroke = F, fillOpacity = 0.5, popup = codevio_master$clean_address) %>%
+  addLegend("bottomright", colors = c("#2A81CB","#CAC428", "#2AAD27", "#CB2B3E", "#7B7B7B", "#CB8427", "#9C2BCB"), labels = c("Less than a week", "1-2 weeks", "A month or less", "1-3 months", "3-6 months", "6 months - 1 year", "Over a year"), 
+            title="Resolution time")
+
+```
+
+
+#Income analysis
+
+```{r}
+#Make codevio_master sf so we can do spatial join
+codevio_sf <- codevio_master %>% 
+  filter(!is.na(latitude))
+
+codevio_sf <- st_as_sf(codevio_sf, coords = c("longitude", "latitude"), crs = 4326)
+
+#Import census data
+
+#Median household income in last 12 months (2020 inflation-adjusted dollars)
+mo_income <- get_acs(geography = "block group",
+              variables = c(median_income = "B19013_001"),
+              state = "MO",
+              year = 2020,
+              #Include block group geometry
+              geometry = T) 
+
+#Note the very large margins of error. Unfortunately ACS is the only income estimation available -- we don't have anything from 2020 Decennial census except population.
+
+#Total population - sticking with acs for consistency.
+mo_pop <- get_acs(geography = "block group",
+              variables = c(population = "B01001_001"),
+              state = "MO",
+              year = 2020)
+
+#Join together
+census_df <- mo_income %>% 
+  full_join(mo_pop, by = "GEOID") %>% 
+  rename("block_group" = NAME.x,
+         "median_income" = estimate.x,
+         "income_moe" = moe.x,
+         "population" = estimate.y,
+         "pop_moe" = moe.y) %>% 
+  select(-c(variable.x, variable.y, NAME.y))
+
+#Set crs to the same as cpd_sf
+st_crs(census_df)#Currently in EPSG 4269
+census_df <- st_transform(census_df, crs = 4326)
+
+#Join to cpd_sf -- place each lon/lat point into its appropriate block group, so we can see median household income for that area
+codevio_sf <- st_join(codevio_sf, census_df, join = st_within) 
+```
+
+```{r}
+#Set df as tibble so that code will run faster -- geometry slows everything down and since I did the join, I really don't need it anymore
+codevio_sf <- as.tibble(codevio_sf)
+
+
+#Look for any pattern with number of calls/patrols and median household income of block group (adjust for population of block group)
+
+codevio_sf %>% 
+  group_by(block_group, median_income, population) %>% 
+  summarise(total_complaints = n()) %>% 
+  #Calculate rate per 100 people
+  mutate(complaints_per_100 = total_complaints/population*100) %>% 
+  arrange(desc(complaints_per_100)) %>% 
+#Make a basic scatter plot with ggplot
+  ggplot(aes(x=median_income, y=complaints_per_100)) + 
+  geom_point() +
+  labs(title = "Correlation between median income and code violation complaints")
+```
+
+```{r}
+
+#Add field to indicate income range
+codevio_sf <- codevio_sf %>% 
+  mutate(income_range = median_income,
+         income_range = ifelse(median_income <= 20000, "$20,000 or under", income_range),
+         income_range = ifelse(median_income > 20000 & median_income <= 30000, "$20,001 - $30,000", income_range),
+         income_range = ifelse(median_income > 30000 & median_income <= 50000, "$30,001 - $50,000", income_range),
+         income_range = ifelse(median_income > 50000 & median_income <= 75000, "$50,001 - $75,000", income_range),
+         income_range = ifelse(median_income > 75000 & median_income <= 100000, "$75,001-$100,000", income_range),
+         income_range = ifelse(median_income > 100000 & median_income <= 150000, "$100,001-$150,000", income_range),
+         income_range = ifelse(median_income >= 150000, "More than $150,000", income_range)) 
+
+#Calculate total population living in each income range -- doing this in two steps
+income_range_pop_1 <- codevio_sf %>% 
+  group_by(income_range, block_group, population) %>% 
+  summarise(total_violations = n())
+
+violations_per_income_range <- income_range_pop_1 %>% 
+  group_by(income_range) %>% 
+  summarise(sum_pop = sum(population), total_violations = sum(total_violations)) %>% 
+  mutate(violations_per_100 = total_violations/sum_pop*100)
+
+#Make a basic bar graph 
+violations_per_income_range %>% 
+  mutate(income_range = fct_relevel(income_range, "$20,000 or under", "$20,001 - $30,000", "$30,001 - $50,000", "$50,001 - $75,000", "$75,001-$100,000", "$100,001-$150,000", "More than $150,000", "NA")) %>% 
+  ggplot(aes(x=income_range, y = violations_per_100)) +
+  geom_col() +
+  theme_light() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) +
+  scale_y_continuous(labels=scales::number_format()) +
+  xlab("Median household income in the last year (2020 inflation adjusted)") +
+  ylab("Number of code violations per 100 people") +
+  labs(title = "Number of code violations by income range")
+
+```
+
+```{r}
+#Look for any pattern with number of calls/patrols and median household income of block group (adjust for number of block groups -- there are more lower income groups in Columbia so I calculated complaints per block group to make a more even comparison)
+
+#Doing this in two steps:
+income_by_bg <- codevio_sf %>% 
+  count(income_range, block_group) %>% 
+  arrange(desc(n))
+
+#Count how many block groups are in each income_range
+income_by_bg <- income_by_bg %>% 
+  group_by(income_range) %>% 
+  summarise(num_block_groups = n())
+
+#Count how many complaints per income
+income_count <- codevio_sf %>% 
+  group_by(income_range) %>% 
+  summarise(num_complaints = n()) %>% 
+  arrange(desc(num_complaints))
+
+#Join together
+complaints_per_bg <- full_join(income_by_bg, income_count, by = "income_range") %>% 
+  mutate(complaints_per_bg = num_complaints/num_block_groups) %>% 
+  arrange(desc(complaints_per_bg)) 
+
+
+#bar graph
+complaints_per_bg %>% 
+  filter(!is.na(income_range)) %>% 
+  mutate(income_range = fct_relevel(income_range, "$20,000 or under", "$20,001 - $30,000", "$30,001 - $50,000", "$50,001 - $75,000", "$75,001-$100,000", "$100,001-$150,000", "More than $150,000")) %>% 
+  ggplot(aes(x=income_range, y = complaints_per_bg)) +
+  geom_col() +
+  theme_light() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) +
+  scale_y_continuous(labels=scales::number_format()) +
+  xlab("Median household income in the last year (2020 inflation adjusted)") +
+  ylab("Number of code violations per block group") +
+  labs(title = "Number of code violations by income range")
+
+```
+```{r}
+
+
+#Identify block groups (neighborhoods) with most complaints
+complaints_count <- codevio_sf %>% 
+  group_by(block_group) %>% 
+  summarise(total_complaints = n()) %>% 
+  arrange(desc(total_complaints))
+
+complaints_count <- complaints_count %>% left_join(select(census_df, geometry, block_group), by = "block_group")
+
+complaints_count <- st_as_sf(complaints_count, crs = 4326)
+class(complaints_count)
+
+#Create color palette
+choro_pal <- colorNumeric(palette = "YlGnBu", domain = complaints_count$complaints_count, n = 10)
+
+leaflet(complaints_count)%>% 
+  addTiles %>% 
+  setView(-92.328636, 38.951561, zoom = 12) %>% 
+  addPolygons(data = complaints_count,
+              popup = complaints_count$block_group,
+              color = ~choro_pal(complaints_count$total_complaints),
+              stroke = F,
+              fillOpacity = 0.75) %>% 
+addLegend("bottomright", 
+              pal = choro_pal, 
+              values = ~ complaints_count$total_complaints,
+              title = "Number of complaints",
+              opacity = 1)
+
+
+```
+
+```{r}
+#Most complaints per population
+complaints_by_pop <- codevio_sf %>% 
+  group_by(block_group, population) %>% 
+  summarise(total_complaints = n()) %>% 
+  #Calculate rate per 100 people
+  mutate(complaints_per_100 = total_complaints/population*100) %>% 
+  arrange(desc(complaints_per_100))
+
+complaints_by_pop <- complaints_by_pop %>% left_join(select(census_df, geometry, block_group), by = "block_group")
+
+complaints_by_pop <- st_as_sf(complaints_by_pop, crs = 4326)
+
+#palette
+choro_pal <- colorNumeric(palette = "YlGnBu", domain = complaints_by_pop$complaints_per_100, n = 10)
+
+leaflet(complaints_by_pop)%>% 
+  addTiles %>% 
+  setView(-92.328636, 38.951561, zoom = 12) %>% 
+  addPolygons(data = complaints_by_pop,
+              popup = complaints_by_pop$block_group,
+              color = ~choro_pal(complaints_by_pop$complaints_per_100),
+              stroke = F,
+              fillOpacity = 0.75) %>% 
+addLegend("bottomright", 
+              pal = choro_pal, 
+              values = ~ complaints_by_pop$complaints_per_100,
+              title = "Number of complaints per 100 people",
+              opacity = 1)
+
+```
+```{r}
+#Look only at rental complaints
+
+rental_complaints <- codevio_sf %>% 
+  filter(clean_case_type == "Rental Violation" | clean_case_type == "Illegal Rental") %>% 
+  group_by(block_group) %>% 
+  summarise(total_complaints = n()) %>% 
+  arrange(desc(total_complaints))
+
+rental_complaints <- rental_complaints %>% left_join(select(census_df, geometry, block_group), by = "block_group")
+
+rental_complaints <- st_as_sf(rental_complaints, crs = 4326)
+
+#palette
+choro_pal <- colorNumeric(palette = "YlGnBu", domain = rental_complaints$total_complaints, n = 10)
+
+leaflet(rental_complaints)%>% 
+  addTiles %>% 
+  setView(-92.328636, 38.951561, zoom = 12) %>% 
+  addPolygons(data = rental_complaints,
+              popup = rental_complaints$block_group,
+              color = ~choro_pal(rental_complaints$total_complaints),
+              stroke = F,
+              fillOpacity = 0.75) %>% 
+addLegend("bottomright", 
+              pal = choro_pal, 
+              values = ~ rental_complaints$total_complaints,
+              title = "Number of rental complaints",
+              opacity = 1)
+
+```
+
+```{r}
+#Look only at property and trash complaints
+
+property_complaints <- codevio_sf %>% 
+  filter(clean_case_type == "Property Maintenance" | clean_case_type == "Trash/Waste") %>% 
+  group_by(block_group) %>% 
+  summarise(total_complaints = n()) %>% 
+  arrange(desc(total_complaints))
+
+property_complaints <- property_complaints %>% left_join(select(census_df, geometry, block_group), by = "block_group")
+
+property_complaints <- st_as_sf(property_complaints, crs = 4326)
+
+#palette
+choro_pal <- colorNumeric(palette = "YlGnBu", domain = property_complaints$total_complaints, n = 10)
+
+leaflet(property_complaints)%>% 
+  addTiles %>% 
+  setView(-92.328636, 38.951561, zoom = 12) %>% 
+  addPolygons(data = property_complaints,
+              popup = property_complaints$block_group,
+              color = ~choro_pal(property_complaints$total_complaints),
+              stroke = F,
+              fillOpacity = 0.75) %>% 
+addLegend("bottomright", 
+              pal = choro_pal, 
+              values = ~ property_complaints$total_complaints,
+              title = "Number of property and trash complaints",
+              opacity = 1)
+```
+```{r}
+#Look only at sidewalk complaints
+
+sidewalk_complaints <- codevio_sf %>% 
+  filter(clean_case_type == "Streets and Sidewalks Violation" | clean_case_type == "Snow/Ice-covered Sidewalk") %>% 
+  group_by(block_group) %>% 
+  summarise(total_complaints = n()) %>% 
+  arrange(desc(total_complaints))
+
+sidewalk_complaints <- sidewalk_complaints %>% left_join(select(census_df, geometry, block_group), by = "block_group")
+
+sidewalk_complaints <- st_as_sf(sidewalk_complaints, crs = 4326)
+
+#palette
+choro_pal <- colorNumeric(palette = "YlGnBu", domain = sidewalk_complaints$total_complaints, n = 10)
+
+leaflet(sidewalk_complaints)%>% 
+  addTiles %>% 
+  setView(-92.328636, 38.951561, zoom = 12) %>% 
+  addPolygons(data = sidewalk_complaints,
+              popup = sidewalk_complaints$block_group,
+              color = ~choro_pal(sidewalk_complaints$total_complaints),
+              stroke = F,
+              fillOpacity = 5) %>% 
+addLegend("bottomright", 
+              pal = choro_pal, 
+              values = ~ sidewalk_complaints$total_complaints,
+              title = "Number of sidewalk complaints",
+              opacity = 1)
+```
+
+```{r}
+#Nuisance complaints
+
+nuisance_complaints <- codevio_sf %>% 
+  filter(clean_case_type == "Nuisance") %>% 
+  group_by(block_group) %>% 
+  summarise(total_complaints = n()) %>% 
+  arrange(desc(total_complaints))
+
+nuisance_complaints <- nuisance_complaints %>% left_join(select(census_df, geometry, block_group), by = "block_group")
+
+nuisance_complaints <- st_as_sf(nuisance_complaints, crs = 4326)
+
+#palette
+
+choro_pal <- colorNumeric(palette = "YlGnBu", domain = nuisance_complaints$total_complaints)
+
+leaflet(sidewalk_complaints)%>% 
+  addTiles %>% 
+  setView(-92.328636, 38.951561, zoom = 12) %>% 
+  addPolygons(data = nuisance_complaints,
+              popup = nuisance_complaints$block_group,
+              color = ~choro_pal(nuisance_complaints$total_complaints),
+              fillOpacity = .75) %>% 
+addLegend("bottomright", 
+              pal = choro_pal, 
+              values = ~ nuisance_complaints$total_complaints,
+              title = "Number of nuisance complaints",
+              opacity = 1)
+```
+
+```{r}
+#Simple income map
+#palette
+income <- codevio_sf %>% 
+  count(block_group, median_income, income_range) %>% 
+  arrange(desc(n))
+
+income <- income %>% left_join(select(census_df, geometry, block_group), by = "block_group")
+
+income <- st_as_sf(income, crs = 4326)
+
+bins <- c(20000, 30000, 50000, 75000, 100000, 150000, Inf)
+
+choro_pal <- colorBin(palette = "YlGnBu", domain = income$median_income, bins = bins)
+
+income %>% 
+  filter(!is.na(median_income)) %>% 
+leaflet()%>% 
+  addTiles %>% 
+  setView(-92.328636, 38.951561, zoom = 12) %>% 
+  addPolygons(data = income,
+              popup = income$median_income,
+              color = ~choro_pal(income$median_income),
+              fillOpacity = 0.5) %>% 
+addLegend("bottomright", 
+              pal = choro_pal, 
+              values = ~ income$median_income,
+              title = "Median income",
+              opacity = 1)
+```
+
+```{r}
+income %>% count(median_income) %>% arrange(desc(n))
+
+codevio_sf %>% filter(is.na(median_income))
+```
+
+```{r}
+
+#See if complaints are resolved quicker/slower dependent on income
+
+#No strong correlation between median resolved time and the median income for all reports
+
+codevio_sf %>% 
+  filter(clean_status == "Resolved") %>% 
+  group_by(block_group, median_income) %>% 
+  summarise(median_res = median(resolution_days)) %>% 
+  ggplot(aes(x=median_income, y = median_res)) +
+  geom_point() +
+  labs(title = "Correlation between median income and complaint resolution")
+
+codevio_sf %>% 
+  filter(clean_status == "Resolved") %>% 
+  mutate(income_range = fct_relevel(income_range, "$20,000 or under", "$20,001 - $30,000", "$30,001 - $50,000", "$50,001 - $75,000", "$75,001-$100,000", "$100,001-$150,000", "More than $150,000")) %>% 
+  group_by(block_group, income_range) %>% 
+  summarise(median_res = median(resolution_days)) %>% 
+  ggplot(aes(x=income_range, y = median_res)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) +
+  scale_y_continuous(labels=scales::number_format()) +
+  labs(title = "Correlation between median income and complaint resolution")
+
+```
+```{r}
+codevio_sf %>% 
+  filter(clean_case_type == "Rental Violation" | clean_case_type == "Illegal Rental") %>% 
+  filter(clean_status == "Resolved") %>% 
+  group_by(block_group, median_income) %>% 
+  summarise(median_res = median(resolution_days)) %>% 
+  ggplot(aes(x=median_income, y = median_res)) +
+  geom_point() +
+  labs(title = "Correlation between median income and complaint resolution for rental complaints")
+
+#bar chart
+codevio_sf %>% 
+  filter(clean_case_type == "Rental Violation" | clean_case_type == "Illegal Rental") %>% 
+  filter(clean_status == "Resolved") %>% 
+  mutate(income_range = fct_relevel(income_range, "$20,000 or under", "$20,001 - $30,000", "$30,001 - $50,000", "$50,001 - $75,000", "$75,001-$100,000", "$100,001-$150,000", "More than $150,000")) %>% 
+  group_by(block_group, income_range) %>% 
+  summarise(median_res = median(resolution_days)) %>% 
+  ggplot(aes(x=income_range, y = median_res)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) +
+  scale_y_continuous(labels=scales::number_format()) +
+  labs(title = "Correlation between median income and complaint resolution for rental complaints")
+```
+```{r}
+#Nuisance complaints
+
+codevio_sf %>% 
+  filter(clean_case_type == "Nuisance") %>% 
+  filter(clean_status == "Resolved") %>% 
+  group_by(block_group, median_income) %>% 
+  summarise(median_res = median(resolution_days)) %>% 
+  ggplot(aes(x=median_income, y = median_res)) +
+  geom_point() +
+  labs(title = "Correlation between median income and complaint resolution for nuisance complaints")
+```
+```{r}
+#Sidewalks
+
+codevio_sf %>% 
+  filter(clean_case_type == "Property Maintenance" | clean_case_type == "Trash/Waste") %>% 
+  filter(clean_status == "Resolved") %>% 
+  group_by(block_group, median_income) %>% 
+  summarise(median_res = median(resolution_days)) %>% 
+  ggplot(aes(x=median_income, y = median_res)) +
+  geom_point() +
+  ylim(0,200) +
+  labs(title = "Correlation between median income and complaint resolution for property and trash complaints")
+```
+
+

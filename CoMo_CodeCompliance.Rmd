@@ -1,0 +1,101 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(ExcelFunctionsR)
+library(lubridate)
+library(tidygeocoder)
+library(leaflet)
+library(mapview)
+```
+
+```{r}
+#Import files -- filepath will need to be changed for your own device
+codevio1 <- read_csv("~/Documents/como_neighborhoods/data/Code_cases_ONS.csv") %>% clean_names()
+codevio2 <- read_csv("~/Documents/como_neighborhoods/data/GovQA_CE_11_18.csv") %>% clean_names()
+```
+
+```{r}
+#Some basic mutating to make the data sets bind easier
+
+#Rename older spreadsheet fields to match newer spreadsheet fields
+codevio2 <- codevio2 %>% 
+  rename("code_case_status" = case_status_codes,
+         "code_case_number" = case_number,
+         "code_case_type" = case_type,
+         "code_case_opened_date" = date_case_reported_ymd,
+          "code_case_closed_date" = case_status_date_ymd)
+
+#Match data types and set dates as dates
+class(codevio2$code_case_number)
+codevio2$code_case_number <- as.character(codevio2$code_case_number)
+codevio2$code_case_opened_date <- ymd(codevio2$code_case_opened_date)
+codevio2$code_case_closed_date <- ymd(codevio2$code_case_closed_date)
+codevio2$case_year <- as.character(codevio2$case_year)
+codevio1$code_case_opened_date <- mdy(codevio1$code_case_opened_date)
+codevio1$code_case_closed_date <- mdy(codevio1$code_case_closed_date)
+
+```
+
+```{r}
+#Get addresses in consistent order
+codevio1 %>% count(address)
+test <- codevio1 %>% filter(is.na(address))#Not consistent, probably no way to fix - only 126
+codevio1 <- codevio1 %>% filter(!is.na(address))#Taking them out
+
+codevio2 %>% count(address)
+test2 <- codevio2 %>% filter(address == 0)#Also not consistent -- not sure how to fix
+
+test2 %>% count(code_case_status)#Just about all of them in compliance or no violation/void
+test2 %>% count(code_case_type) %>% arrange(desc(n)) #A lot of weed/general things not tied to addresses, it seems
+test2 %>% count(cename) %>% arrange(desc(n))#Just about all of these are businesses or public property, not residential
+
+codevio2 <- codevio2 %>% filter(address != 0)
+
+
+codevio2 <- codevio2 %>% 
+  mutate(clean_address = paste0(address, ", ", "COLUMBIA, MO", " ", zip_code))
+
+codevio1 <- codevio1 %>% 
+  mutate(clean_address = address)
+
+#Bind rows
+codevio_master <- bind_rows(codevio1, codevio2)
+
+#Check for consistency
+codevio_master %>% select(address, clean_address)
+
+#Remove hidden line breaks in some of the addresses -- to make sure it doesn't trip up the geocoding
+codevio_master <- codevio_master %>% 
+  mutate(clean_address = if_else(grepl("\r\n", clean_address), gsub("\r\n", ", ", clean_address), clean_address))
+
+#Check for NAs - none
+codevio_master %>% filter(is.na(clean_address))
+
+codevio_master %>% count(clean_address) #Still quite a few addresses that are not addresses, but we've got all that we can convert
+```
+
+```{r}
+#Geocode to find lon/lat
+ codevio_master <- codevio_master %>% 
+  tidygeocoder::geocode(clean_address, method = 'osm', lat = latitude, lon = longitude, progress = TRUE)
+
+```
+
+
+```{r}
+#Save CSV for later use -- won't have to run geocode every time
+ write_csv(codevio_master, "~/Documents/como_neighborhoods/data/como_code_violations.csv")
+
+#back up copy
+ write_csv(codevio_master, "~/Documents/como_code_violations.csv")
+
+```
+
+
+
+
