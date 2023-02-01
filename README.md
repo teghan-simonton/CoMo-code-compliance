@@ -1,5 +1,4 @@
 # CoMo-code-compliance
-Analysis of code compliance complaints in Columbia, Missouri
 
 We obtained a dataset containing code compliance complaints for Columbia, Missouri for the last few years. The dataset required significan cleaning, and the address of each complaint needed to be geocoded into longitude/latitude points before I could start spacial analysis. Most of this can be found in the file, CoMo_CodeCompliance.Rmd.
 
